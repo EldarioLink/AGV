@@ -1,20 +1,30 @@
 #include <Arduino.h>
 
 // =====================================================
-// MOTOR
+// MOTOR RIGHT
 // =====================================================
 
-const int ENA = 2;
-const int IN1 = 3;
-const int IN2 = 4;
+const int RIGHT_PWM = 2;
+const int RIGHT_IN1 = 3;
+const int RIGHT_IN2 = 4;
 
 // =====================================================
-// ENCODER
+// MOTOR LEFT
 // =====================================================
 
-const int ENCODER_PIN = 6;
+const int LEFT_PWM = 7;
+const int LEFT_IN1 = 8;
+const int LEFT_IN2 = 9;
 
-volatile unsigned long encoderPulses = 0;
+// =====================================================
+// ENCODERS
+// =====================================================
+
+const int RIGHT_ENCODER_PIN = 6;
+const int LEFT_ENCODER_PIN = 10;
+
+volatile unsigned long rightEncoderPulses = 0;
+volatile unsigned long leftEncoderPulses = 0;
 
 // =====================================================
 // WHEEL
@@ -31,42 +41,209 @@ const float WHEEL_CIRCUMFERENCE = PI * WHEEL_DIAMETER;
 const int MIN_PWM = 80;
 const int MAX_PWM = 255;
 
-int pwm = 80;
-
 // =====================================================
 // SPEED
 // =====================================================
 
-// Скорость, которую запросил пользователь
-float targetSpeed = 0.0;
-
-// Скорость, которую реально сейчас требует PID
-float currentTargetSpeed = 0.0;
-
-// Максимальная скорость
 const float MAX_SPEED = 0.25;
 
-// Шаг плавного изменения скорости
+// Шаг изменения целевой скорости
 const float SPEED_STEP = 0.01;
 
 // =====================================================
-// PID
+// TARGET SPEED
 // =====================================================
 
-float Kp = 500.0;
-float Ki = 80.0;
-float Kd = 0.0;
+// Команда от Orange Pi
+float targetLeftSpeed = 0.0;
+float targetRightSpeed = 0.0;
 
-float integral = 0.0;
-float previousError = 0.0;
+// Плавно изменяемая скорость
+float currentLeftSpeed = 0.0;
+float currentRightSpeed = 0.0;
 
 // =====================================================
-// ENCODER INTERRUPT
+// PWM
 // =====================================================
 
-void encoderISR()
+int leftPWM = 0;
+int rightPWM = 0;
+
+// =====================================================
+// PID LEFT
+// =====================================================
+
+float KpLeft = 500.0;
+float KiLeft = 80.0;
+float KdLeft = 0.0;
+
+float integralLeft = 0.0;
+float previousErrorLeft = 0.0;
+
+// =====================================================
+// PID RIGHT
+// =====================================================
+
+float KpRight = 500.0;
+float KiRight = 80.0;
+float KdRight = 0.0;
+
+float integralRight = 0.0;
+float previousErrorRight = 0.0;
+
+// =====================================================
+// ENCODER INTERRUPTS
+// =====================================================
+
+void rightEncoderISR()
 {
-  encoderPulses++;
+  rightEncoderPulses++;
+}
+
+void leftEncoderISR()
+{
+  leftEncoderPulses++;
+}
+
+// =====================================================
+// MOTOR CONTROL
+// =====================================================
+
+void setRightMotor(int pwm)
+{
+  if (pwm > 0)
+  {
+    digitalWrite(RIGHT_IN1, HIGH);
+    digitalWrite(RIGHT_IN2, LOW);
+
+    analogWrite(RIGHT_PWM, pwm);
+  }
+  else if (pwm < 0)
+  {
+    digitalWrite(RIGHT_IN1, LOW);
+    digitalWrite(RIGHT_IN2, HIGH);
+
+    analogWrite(RIGHT_PWM, -pwm);
+  }
+  else
+  {
+    analogWrite(RIGHT_PWM, 0);
+
+    digitalWrite(RIGHT_IN1, LOW);
+    digitalWrite(RIGHT_IN2, LOW);
+  }
+}
+
+// =====================================================
+
+void setLeftMotor(int pwm)
+{
+  if (pwm > 0)
+  {
+    digitalWrite(LEFT_IN1, HIGH);
+    digitalWrite(LEFT_IN2, LOW);
+
+    analogWrite(LEFT_PWM, pwm);
+  }
+  else if (pwm < 0)
+  {
+    digitalWrite(LEFT_IN1, LOW);
+    digitalWrite(LEFT_IN2, HIGH);
+
+    analogWrite(LEFT_PWM, -pwm);
+  }
+  else
+  {
+    analogWrite(LEFT_PWM, 0);
+
+    digitalWrite(LEFT_IN1, LOW);
+    digitalWrite(LEFT_IN2, LOW);
+  }
+}
+
+// =====================================================
+// STOP
+// =====================================================
+
+void stopMotors()
+{
+  targetLeftSpeed = 0.0;
+  targetRightSpeed = 0.0;
+
+  currentLeftSpeed = 0.0;
+  currentRightSpeed = 0.0;
+
+  leftPWM = 0;
+  rightPWM = 0;
+
+  integralLeft = 0.0;
+  integralRight = 0.0;
+
+  previousErrorLeft = 0.0;
+  previousErrorRight = 0.0;
+
+  setLeftMotor(0);
+  setRightMotor(0);
+}
+
+// =====================================================
+// UART COMMAND
+// =====================================================
+
+void processCommand(String command)
+{
+  command.trim();
+
+  if (command.startsWith("VEL"))
+  {
+    float leftSpeed;
+    float rightSpeed;
+
+    int result = sscanf(
+        command.c_str(),
+        "VEL %f %f",
+        &leftSpeed,
+        &rightSpeed);
+
+    if (result == 2)
+    {
+      if (
+          leftSpeed >= -MAX_SPEED &&
+          leftSpeed <= MAX_SPEED &&
+          rightSpeed >= -MAX_SPEED &&
+          rightSpeed <= MAX_SPEED)
+      {
+        targetLeftSpeed = leftSpeed;
+        targetRightSpeed = rightSpeed;
+
+        integralLeft = 0.0;
+        integralRight = 0.0;
+
+        previousErrorLeft = 0.0;
+        previousErrorRight = 0.0;
+
+        Serial1.print("OK VEL ");
+        Serial1.print(targetLeftSpeed, 3);
+        Serial1.print(" ");
+        Serial1.println(targetRightSpeed, 3);
+      }
+      else
+      {
+        Serial1.println("ERROR SPEED");
+      }
+    }
+    else
+    {
+      Serial1.println("ERROR FORMAT");
+    }
+  }
+
+  else if (command == "STOP")
+  {
+    stopMotors();
+
+    Serial1.println("OK STOP");
+  }
 }
 
 // =====================================================
@@ -75,34 +252,90 @@ void encoderISR()
 
 void setup()
 {
+  // ---------------------------------------------------
+  // USB SERIAL
+  // ---------------------------------------------------
+
   Serial.begin(115200);
 
-  pinMode(ENA, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
+  // ---------------------------------------------------
+  // UART TO ORANGE PI
+  // ---------------------------------------------------
 
-  pinMode(ENCODER_PIN, INPUT);
+  Serial1.setTX(0); // GP0
+  Serial1.setRX(1); // GP1
+  Serial1.begin(115200);
+
+  // ---------------------------------------------------
+  // RIGHT MOTOR
+  // ---------------------------------------------------
+
+  pinMode(RIGHT_PWM, OUTPUT);
+  pinMode(RIGHT_IN1, OUTPUT);
+  pinMode(RIGHT_IN2, OUTPUT);
+
+  // ---------------------------------------------------
+  // LEFT MOTOR
+  // ---------------------------------------------------
+
+  pinMode(LEFT_PWM, OUTPUT);
+  pinMode(LEFT_IN1, OUTPUT);
+  pinMode(LEFT_IN2, OUTPUT);
+
+  // ---------------------------------------------------
+  // ENCODERS
+  // ---------------------------------------------------
+
+  pinMode(RIGHT_ENCODER_PIN, INPUT);
+  pinMode(LEFT_ENCODER_PIN, INPUT);
 
   attachInterrupt(
-      digitalPinToInterrupt(ENCODER_PIN),
-      encoderISR,
+      digitalPinToInterrupt(RIGHT_ENCODER_PIN),
+      rightEncoderISR,
       RISING);
 
-  analogWrite(ENA, 0);
+  attachInterrupt(
+      digitalPinToInterrupt(LEFT_ENCODER_PIN),
+      leftEncoderISR,
+      RISING);
 
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
+  // ---------------------------------------------------
+  // STOP MOTORS
+  // ---------------------------------------------------
+
+  stopMotors();
+
+  // ---------------------------------------------------
+  // DEBUG
+  // ---------------------------------------------------
 
   Serial.println();
   Serial.println("================================");
-  Serial.println("ONE WHEEL SPEED CONTROLLER");
+  Serial.println("TWO WHEEL SPEED CONTROLLER");
   Serial.println("================================");
-  Serial.println("Enter speed in m/s:");
-  Serial.println("0.05");
-  Serial.println("0.10");
-  Serial.println("0.15");
-  Serial.println("Stop: 0");
+
+  Serial.println("RIGHT:");
+  Serial.println("PWM  = GP2");
+  Serial.println("IN1  = GP3");
+  Serial.println("IN2  = GP4");
+  Serial.println("ENC  = GP6");
+
   Serial.println();
+
+  Serial.println("LEFT:");
+  Serial.println("PWM  = GP7");
+  Serial.println("IN1  = GP8");
+  Serial.println("IN2  = GP9");
+  Serial.println("ENC  = GP10");
+
+  Serial.println();
+
+  Serial.println("UART:");
+  Serial.println("TX = GP0");
+  Serial.println("RX = GP1");
+
+  Serial.println();
+  Serial.println("Waiting for VEL command...");
 }
 
 // =====================================================
@@ -111,62 +344,21 @@ void setup()
 
 void loop()
 {
-  // =================================================
-  // RECEIVE COMMAND
-  // =================================================
+  // ===================================================
+  // RECEIVE UART COMMAND
+  // ===================================================
 
-  if (Serial.available())
+  if (Serial1.available())
   {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
+    String command =
+        Serial1.readStringUntil('\n');
 
-    if (command.length() > 0)
-    {
-      float newSpeed = command.toFloat();
-
-      if (newSpeed >= 0.0 && newSpeed <= MAX_SPEED)
-      {
-        targetSpeed = newSpeed;
-
-        Serial.print("New target speed: ");
-        Serial.print(targetSpeed, 3);
-        Serial.println(" m/s");
-
-        // Сбрасываем интегральную часть
-        integral = 0.0;
-        previousError = 0.0;
-
-        // Если остановка
-        if (targetSpeed == 0.0)
-        {
-          currentTargetSpeed = 0.0;
-
-          pwm = 0;
-
-          analogWrite(ENA, 0);
-
-          digitalWrite(IN1, LOW);
-          digitalWrite(IN2, LOW);
-        }
-        else
-        {
-          // Направление вперёд
-          digitalWrite(IN1, HIGH);
-          digitalWrite(IN2, LOW);
-
-          // Минимальный рабочий PWM
-          if (pwm < MIN_PWM)
-            pwm = MIN_PWM;
-
-          analogWrite(ENA, pwm);
-        }
-      }
-    }
+    processCommand(command);
   }
 
-  // =================================================
-  // SMOOTH TARGET SPEED
-  // =================================================
+  // ===================================================
+  // SMOOTH SPEED RAMP
+  // ===================================================
 
   static unsigned long lastSpeedRamp = 0;
 
@@ -174,31 +366,48 @@ void loop()
   {
     lastSpeedRamp = millis();
 
-    // Увеличиваем целевую скорость
-    if (currentTargetSpeed < targetSpeed)
-    {
-      currentTargetSpeed += SPEED_STEP;
+    // LEFT
 
-      if (currentTargetSpeed > targetSpeed)
-        currentTargetSpeed = targetSpeed;
+    if (currentLeftSpeed < targetLeftSpeed)
+    {
+      currentLeftSpeed += SPEED_STEP;
+
+      if (currentLeftSpeed > targetLeftSpeed)
+        currentLeftSpeed = targetLeftSpeed;
+    }
+    else if (currentLeftSpeed > targetLeftSpeed)
+    {
+      currentLeftSpeed -= SPEED_STEP;
+
+      if (currentLeftSpeed < targetLeftSpeed)
+        currentLeftSpeed = targetLeftSpeed;
     }
 
-    // Уменьшаем целевую скорость
-    else if (currentTargetSpeed > targetSpeed)
-    {
-      currentTargetSpeed -= SPEED_STEP;
+    // RIGHT
 
-      if (currentTargetSpeed < targetSpeed)
-        currentTargetSpeed = targetSpeed;
+    if (currentRightSpeed < targetRightSpeed)
+    {
+      currentRightSpeed += SPEED_STEP;
+
+      if (currentRightSpeed > targetRightSpeed)
+        currentRightSpeed = targetRightSpeed;
+    }
+    else if (currentRightSpeed > targetRightSpeed)
+    {
+      currentRightSpeed -= SPEED_STEP;
+
+      if (currentRightSpeed < targetRightSpeed)
+        currentRightSpeed = targetRightSpeed;
     }
   }
 
-  // =================================================
+  // ===================================================
   // SPEED MEASUREMENT + PID
-  // =================================================
+  // ===================================================
 
   static unsigned long lastTime = 0;
-  static unsigned long lastPulses = 0;
+  static unsigned long lastLeftPulses = 0;
+  static unsigned long lastRightPulses = 0;
 
   unsigned long currentTime = millis();
 
@@ -207,98 +416,240 @@ void loop()
     float dt =
         (currentTime - lastTime) / 1000.0;
 
-    // Считываем энкодер
+    // -------------------------------------------------
+    // READ ENCODERS
+    // -------------------------------------------------
+
     noInterrupts();
 
-    unsigned long currentPulses =
-        encoderPulses;
+    unsigned long currentLeftPulses =
+        leftEncoderPulses;
+
+    unsigned long currentRightPulses =
+        rightEncoderPulses;
 
     interrupts();
 
-    unsigned long pulseDelta =
-        currentPulses - lastPulses;
+    unsigned long leftPulseDelta =
+        currentLeftPulses - lastLeftPulses;
 
-    // =================================================
-    // CALCULATE SPEED
-    // =================================================
+    unsigned long rightPulseDelta =
+        currentRightPulses - lastRightPulses;
 
-    float pulsesPerSecond =
-        pulseDelta / dt;
+    // -------------------------------------------------
+    // LEFT SPEED
+    // -------------------------------------------------
 
-    float rps =
-        pulsesPerSecond /
+    float leftPulsesPerSecond =
+        leftPulseDelta / dt;
+
+    float leftRPS =
+        leftPulsesPerSecond /
         PULSES_PER_REVOLUTION;
 
-    float actualSpeed =
-        rps * WHEEL_CIRCUMFERENCE;
+    float actualLeftSpeed =
+        leftRPS *
+        WHEEL_CIRCUMFERENCE;
+
+    // -------------------------------------------------
+    // RIGHT SPEED
+    // -------------------------------------------------
+
+    float rightPulsesPerSecond =
+        rightPulseDelta / dt;
+
+    float rightRPS =
+        rightPulsesPerSecond /
+        PULSES_PER_REVOLUTION;
+
+    float actualRightSpeed =
+        rightRPS *
+        WHEEL_CIRCUMFERENCE;
 
     // =================================================
-    // PID
+    // LEFT PID
     // =================================================
 
-    if (currentTargetSpeed > 0.0)
+    if (currentLeftSpeed > 0.0)
     {
       float error =
-          currentTargetSpeed - actualSpeed;
+          currentLeftSpeed - actualLeftSpeed;
 
-      // Integral
-      integral += error * dt;
+      integralLeft += error * dt;
 
-      // Ограничение integral
-      if (integral > 1.0)
-        integral = 1.0;
+      if (integralLeft > 1.0)
+        integralLeft = 1.0;
 
-      if (integral < -1.0)
-        integral = -1.0;
+      if (integralLeft < -1.0)
+        integralLeft = -1.0;
 
-      // Derivative
       float derivative =
-          (error - previousError) / dt;
+          (error - previousErrorLeft) / dt;
 
-      // PID
       float output =
-          Kp * error +
-          Ki * integral +
-          Kd * derivative;
+          KpLeft * error +
+          KiLeft * integralLeft +
+          KdLeft * derivative;
 
-      // Изменение PWM
-      pwm += (int)output;
+      leftPWM += (int)output;
 
-      // Ограничение PWM
-      if (pwm > MAX_PWM)
-        pwm = MAX_PWM;
+      if (leftPWM > MAX_PWM)
+        leftPWM = MAX_PWM;
 
-      if (pwm < MIN_PWM)
-        pwm = MIN_PWM;
+      if (leftPWM < MIN_PWM)
+        leftPWM = MIN_PWM;
 
-      analogWrite(ENA, pwm);
+      setLeftMotor(leftPWM);
 
-      previousError = error;
+      previousErrorLeft = error;
+    }
+    else if (currentLeftSpeed < 0.0)
+    {
+      // Пока используем такую же PID-логику
+      // для движения назад
+
+      float desiredSpeed =
+          -currentLeftSpeed;
+
+      float error =
+          desiredSpeed - actualLeftSpeed;
+
+      integralLeft += error * dt;
+
+      if (integralLeft > 1.0)
+        integralLeft = 1.0;
+
+      if (integralLeft < -1.0)
+        integralLeft = -1.0;
+
+      float output =
+          KpLeft * error +
+          KiLeft * integralLeft;
+
+      leftPWM += (int)output;
+
+      if (leftPWM > MAX_PWM)
+        leftPWM = MAX_PWM;
+
+      if (leftPWM < MIN_PWM)
+        leftPWM = MIN_PWM;
+
+      setLeftMotor(-leftPWM);
+    }
+    else
+    {
+      leftPWM = 0;
+      setLeftMotor(0);
+
+      integralLeft = 0.0;
+      previousErrorLeft = 0.0;
     }
 
     // =================================================
-    // DEBUG
+    // RIGHT PID
     // =================================================
 
-    Serial.print("Target: ");
-    Serial.print(targetSpeed, 3);
+    if (currentRightSpeed > 0.0)
+    {
+      float error =
+          currentRightSpeed - actualRightSpeed;
 
-    Serial.print(" | Ramp: ");
-    Serial.print(currentTargetSpeed, 3);
+      integralRight += error * dt;
 
-    Serial.print(" | Speed: ");
-    Serial.print(actualSpeed, 3);
+      if (integralRight > 1.0)
+        integralRight = 1.0;
 
-    Serial.print(" | Error: ");
-    Serial.print(currentTargetSpeed - actualSpeed, 3);
+      if (integralRight < -1.0)
+        integralRight = -1.0;
 
-    Serial.print(" | PWM: ");
-    Serial.print(pwm);
+      float derivative =
+          (error - previousErrorRight) / dt;
 
-    Serial.print(" | Pulses/s: ");
-    Serial.println(pulsesPerSecond);
+      float output =
+          KpRight * error +
+          KiRight * integralRight +
+          KdRight * derivative;
 
-    lastPulses = currentPulses;
+      rightPWM += (int)output;
+
+      if (rightPWM > MAX_PWM)
+        rightPWM = MAX_PWM;
+
+      if (rightPWM < MIN_PWM)
+        rightPWM = MIN_PWM;
+
+      setRightMotor(rightPWM);
+
+      previousErrorRight = error;
+    }
+    else if (currentRightSpeed < 0.0)
+    {
+      float desiredSpeed =
+          -currentRightSpeed;
+
+      float error =
+          desiredSpeed - actualRightSpeed;
+
+      integralRight += error * dt;
+
+      if (integralRight > 1.0)
+        integralRight = 1.0;
+
+      if (integralRight < -1.0)
+        integralRight = -1.0;
+
+      float output =
+          KpRight * error +
+          KiRight * integralRight;
+
+      rightPWM += (int)output;
+
+      if (rightPWM > MAX_PWM)
+        rightPWM = MAX_PWM;
+
+      if (rightPWM < MIN_PWM)
+        rightPWM = MIN_PWM;
+
+      setRightMotor(-rightPWM);
+    }
+    else
+    {
+      rightPWM = 0;
+      setRightMotor(0);
+
+      integralRight = 0.0;
+      previousErrorRight = 0.0;
+    }
+
+    // =================================================
+    // DEBUG USB
+    // =================================================
+
+    Serial.print("L Target: ");
+    Serial.print(currentLeftSpeed, 3);
+
+    Serial.print(" | L Speed: ");
+    Serial.print(actualLeftSpeed, 3);
+
+    Serial.print(" | L PWM: ");
+    Serial.print(leftPWM);
+
+    Serial.print(" || R Target: ");
+    Serial.print(currentRightSpeed, 3);
+
+    Serial.print(" | R Speed: ");
+    Serial.print(actualRightSpeed, 3);
+
+    Serial.print(" | R PWM: ");
+    Serial.println(rightPWM);
+
+    // -------------------------------------------------
+    // UPDATE
+    // -------------------------------------------------
+
+    lastLeftPulses = currentLeftPulses;
+    lastRightPulses = currentRightPulses;
+
     lastTime = currentTime;
   }
 }
