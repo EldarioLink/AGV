@@ -113,15 +113,15 @@ void setRightMotor(int pwm)
 {
   if (pwm > 0)
   {
-    digitalWrite(RIGHT_IN1, HIGH);
-    digitalWrite(RIGHT_IN2, LOW);
+    digitalWrite(RIGHT_IN1, LOW);
+    digitalWrite(RIGHT_IN2, HIGH);
 
     analogWrite(RIGHT_PWM, pwm);
   }
   else if (pwm < 0)
   {
-    digitalWrite(RIGHT_IN1, LOW);
-    digitalWrite(RIGHT_IN2, HIGH);
+    digitalWrite(RIGHT_IN1, HIGH);
+    digitalWrite(RIGHT_IN2, LOW);
 
     analogWrite(RIGHT_PWM, -pwm);
   }
@@ -624,6 +624,14 @@ void loop()
     // =================================================
     // DEBUG USB
     // =================================================
+
+    Serial.print("L pulses: ");
+    Serial.print(leftPulseDelta);
+
+    Serial.print(" | R pulses: ");
+    Serial.print(rightPulseDelta);
+
+    Serial.print(" || ");
 
     Serial.print("L Target: ");
     Serial.print(currentLeftSpeed, 3);
