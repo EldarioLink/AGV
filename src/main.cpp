@@ -38,7 +38,7 @@ const float WHEEL_CIRCUMFERENCE = PI * WHEEL_DIAMETER;
 // PWM
 // =====================================================
 
-const int MIN_PWM = 80;
+const int MIN_PWM = 90;
 const int MAX_PWM = 255;
 
 // =====================================================
